@@ -7,27 +7,27 @@ TOKEN = "8613876101:AAEbC4ldoDdDOREv6-pxxZ5d-Qqv6usQ3P4"
 CHAT_ID = "7086903720"
 
 @app.route('/webhook', methods=['POST'])
+@app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.json
-    
+
     symbol = data.get("symbol", "UNKNOWN")
     price = float(data.get("price", 0))
     signal = data.get("signal", "N/A")
 
-# сила сигнала
-strength = "MEDIUM"
+    # сила сигнала
+    strength = "MEDIUM"
+    if signal == "LONG":
+        strength = "STRONG"
+    elif signal == "SHORT":
+        strength = "STRONG"
 
-if signal == "LONG":
-    strength = "STRONG"
-elif signal == "SHORT":
-    strength = "STRONG"
+    # риск
+    deposit = 2000
+    risk_percent = 1
+    risk_amount = deposit * (risk_percent / 100)
 
-# риск
-deposit = 2000
-risk_percent = 1
-risk_amount = deposit * (risk_percent / 100)
-
-text = f"""
+    text = f"""
 📊 СИГНАЛ
 
 Пара: {symbol}
@@ -43,14 +43,13 @@ text = f"""
 – ретест
 – объём
 """
-    
-requests.post(
+
+    requests.post(
         f"https://api.telegram.org/bot{TOKEN}/sendMessage",
         json={"chat_id": CHAT_ID, "text": text}
-)
-    
-return "ok"
+    )
 
+    return "ok"
 @app.route('/')
 def home():
     return "Bot is running"
