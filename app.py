@@ -7,7 +7,6 @@ TOKEN = "8613876101:AAEbC4ldoDdDOREv6-pxxZ5d-Qqv6usQ3P4"
 CHAT_ID = "7086903720"
 
 @app.route('/webhook', methods=['POST'])
-@app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.json
 
@@ -22,32 +21,66 @@ def webhook():
     elif signal == "SHORT":
         strength = "STRONG"
 
-    # риск
-    deposit = 2000
-    risk_percent = 1
-    risk_amount = deposit * (risk_percent / 100)
+# ===== НОВАЯ ЛОГИКА =====
 
-    text = f"""
+entry = price
+
+# стоп (макс 5%)
+max_stop_distance = price * 0.05
+
+if signal == "LONG":
+    structure_stop = price * 0.97
+    max_stop = price * 0.95
+    stop = max(structure_stop, max_stop)
+
+elif signal == "SHORT":
+    structure_stop = price * 1.03
+    max_stop = price * 1.05
+    stop = min(structure_stop, max_stop)
+
+# расстояние до стопа
+risk_distance = abs(price - stop)
+
+if risk_distance <= 0:
+    return "error"
+
+# тейки
+if signal == "LONG":
+    tp1 = price + risk_distance * 1.5
+    tp2 = price + risk_distance * 2.5
+else:
+    tp1 = price - risk_distance * 1.5
+    tp2 = price - risk_distance * 2.5
+
+# риск
+deposit = 2000
+risk_percent = 1
+risk_amount = deposit * (risk_percent / 100)
+
+position_size = risk_amount / risk_distance
+
+text = f"""
 📊 СИГНАЛ
 
 Пара: {symbol}
 Тип: {signal}
 Сила: {strength}
 
-Цена: {price}
+🎯 Вход: {entry:.5f}
+🛑 Стоп: {stop:.5f} (≤5%)
+
+🎯 Тейки:
+TP1: {tp1:.5f}
+TP2: {tp2:.5f}
 
 💰 Риск: ${risk_amount}
-
-Проверь:
-– уровень
-– ретест
-– объём
+📦 Объём: {position_size:.2f}
 """
 
-    requests.post(
+requests.post(
         f"https://api.telegram.org/bot{TOKEN}/sendMessage",
         json={"chat_id": CHAT_ID, "text": text}
-    )
+)
 
     return "ok"
 @app.route('/')
