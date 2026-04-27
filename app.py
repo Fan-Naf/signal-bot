@@ -59,28 +59,28 @@ risk_amount = deposit * (risk_percent / 100)
 
 position_size = risk_amount / risk_distance
 
-text = f"""
-📊 СИГНАЛ
+    text = f"""
+    📊 СИГНАЛ
 
-Пара: {symbol}
-Тип: {signal}
-Сила: {strength}
+    Пара: {symbol}
+    Тип: {signal}
+    Сила: {strength}
 
-🎯 Вход: {entry:.5f}
-🛑 Стоп: {stop:.5f} (≤5%)
+    🎯 Вход: {entry:.5f}
+    🛑 Стоп: {stop:.5f} (≤5%)
 
-🎯 Тейки:
-TP1: {tp1:.5f}
-TP2: {tp2:.5f}
+    🎯 Тейки:
+    TP1: {tp1:.5f}
+    TP2: {tp2:.5f}
 
-💰 Риск: ${risk_amount}
-📦 Объём: {position_size:.2f}
-"""
+    💰 Риск: ${risk_amount}
+    📦 Объём: {position_size:.2f}
+    """
 
-requests.post(
+    requests.post(
         f"https://api.telegram.org/bot{TOKEN}/sendMessage",
         json={"chat_id": CHAT_ID, "text": text}
-)
+    )
 
     return "ok"
 @app.route('/')
