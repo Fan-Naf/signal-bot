@@ -1,52 +1,88 @@
 from flask import Flask, request
 import requests
+import time
 
 app = Flask(__name__)
 
 TOKEN = "8613876101:AAEbC4ldoDdDOREv6-pxxZ5d-Qqv6usQ3P4"
 CHAT_ID = "7086903720"
 
+# анти-спам (глобальная переменная)
+last_signal_time = 0
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
+    global last_signal_time
+
     data = request.json
 
     symbol = data.get("symbol", "UNKNOWN")
     price = float(data.get("price", 0))
     signal = data.get("signal", "N/A")
 
-    # сила сигнала
+    # =========================
+    # ⏱ АНТИ-СПАМ (5 минут)
+    # =========================
+    cooldown_seconds = 300
+    current_time = time.time()
+
+    if current_time - last_signal_time < cooldown_seconds:
+        return "cooldown"
+
+    # =========================
+    # 📏 ФИЛЬТР ДВИЖЕНИЯ
+    # =========================
+    min_move = 0.003  # 0.3%
+
+    if price == 0:
+        return "no price"
+
+    if abs(price * min_move) < 0.0001:
+        return "no volatility"
+
+    # =========================
+    # 📉 ФИЛЬТР ТРЕНДА (заглушка)
+    # =========================
+    trend = "UP" if signal == "LONG" else "DOWN"
+
+    if signal == "LONG" and trend != "UP":
+        return "wrong trend"
+
+    if signal == "SHORT" and trend != "DOWN":
+        return "wrong trend"
+
+    # =========================
+    # 💪 СИЛА СИГНАЛА
+    # =========================
     strength = "MEDIUM"
-    if signal == "LONG":
-        strength = "STRONG"
-    elif signal == "SHORT":
+
+    if signal in ["LONG", "SHORT"]:
         strength = "STRONG"
 
-    # ===== НОВАЯ ЛОГИКА =====
-
+    # =========================
+    # 🎯 ВХОД / СТОП / ТЕЙКИ
+    # =========================
     entry = price
 
-    # стоп (макс 5%)
+    max_stop_distance = price * 0.05  # 5%
+
     if signal == "LONG":
         structure_stop = price * 0.97
-        max_stop = price * 0.95
-        stop = max(structure_stop, max_stop)
+        stop = max(structure_stop, price - max_stop_distance)
 
     elif signal == "SHORT":
         structure_stop = price * 1.03
-        max_stop = price * 1.05
-        stop = min(structure_stop, max_stop)
+        stop = min(structure_stop, price + max_stop_distance)
 
     else:
         return "no signal"
 
-    # расстояние до стопа
     risk_distance = abs(price - stop)
 
     if risk_distance <= 0:
-        return "error"
+        return "bad risk"
 
-    # тейки (через риск)
+    # тейки (RR)
     if signal == "LONG":
         tp1 = price + risk_distance * 1.5
         tp2 = price + risk_distance * 2.5
@@ -54,14 +90,18 @@ def webhook():
         tp1 = price - risk_distance * 1.5
         tp2 = price - risk_distance * 2.5
 
-    # риск
+    # =========================
+    # 💰 РИСК-МЕНЕДЖМЕНТ
+    # =========================
     deposit = 2000
     risk_percent = 1
-    risk_amount = deposit * (risk_percent / 100)
 
+    risk_amount = deposit * (risk_percent / 100)
     position_size = risk_amount / risk_distance
 
-    # сообщение
+    # =========================
+    # 🧾 СООБЩЕНИЕ
+    # =========================
     text = f"""
 📊 СИГНАЛ
 
@@ -80,10 +120,14 @@ TP2: {tp2:.5f}
 📦 Объём: {position_size:.2f}
 """
 
+    # отправка в Telegram
     requests.post(
         f"https://api.telegram.org/bot{TOKEN}/sendMessage",
         json={"chat_id": CHAT_ID, "text": text}
     )
+
+    # обновляем время сигнала
+    last_signal_time = current_time
 
     return "ok"
 
