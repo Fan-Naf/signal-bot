@@ -11,8 +11,8 @@ def webhook():
     data = request.json
     
     symbol = data.get("symbol", "UNKNOWN")
-price = float(data.get("price", 0))
-signal = data.get("signal", "N/A")
+    price = float(data.get("price", 0))
+    signal = data.get("signal", "N/A")
 
 # сила сигнала
 strength = "MEDIUM"
@@ -49,7 +49,7 @@ requests.post(
         json={"chat_id": CHAT_ID, "text": text}
 )
     
-    return "ok"
+return "ok"
 
 @app.route('/')
 def home():
