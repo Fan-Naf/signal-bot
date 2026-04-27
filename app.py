@@ -44,10 +44,10 @@ text = f"""
 – объём
 """
     
-    requests.post(
+requests.post(
         f"https://api.telegram.org/bot{TOKEN}/sendMessage",
         json={"chat_id": CHAT_ID, "text": text}
-    )
+)
     
     return "ok"
 
