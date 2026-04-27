@@ -10,7 +10,39 @@ CHAT_ID = "7086903720"
 def webhook():
     data = request.json
     
-    text = f"📊 Новый сигнал:\n{data}"
+    symbol = data.get("symbol", "UNKNOWN")
+price = float(data.get("price", 0))
+signal = data.get("signal", "N/A")
+
+# сила сигнала
+strength = "MEDIUM"
+
+if signal == "LONG":
+    strength = "STRONG"
+elif signal == "SHORT":
+    strength = "STRONG"
+
+# риск
+deposit = 2000
+risk_percent = 1
+risk_amount = deposit * (risk_percent / 100)
+
+text = f"""
+📊 СИГНАЛ
+
+Пара: {symbol}
+Тип: {signal}
+Сила: {strength}
+
+Цена: {price}
+
+💰 Риск: ${risk_amount}
+
+Проверь:
+– уровень
+– ретест
+– объём
+"""
     
     requests.post(
         f"https://api.telegram.org/bot{TOKEN}/sendMessage",
