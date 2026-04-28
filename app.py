@@ -33,9 +33,17 @@ def webhook():
     except:
         return "invalid price"
 
+    try:
+        atr = float(data.get("atr", 0))
+    except:
+        return "invalid atr"
+
+    if atr == 0:
+        return "no atr"
+
     signal = data.get("signal", "N/A")
 
-    # фильтр сигнала
+    # === СИГНАЛ ===
     if signal == "LONG":
         signal_emoji = "🟢"
     elif signal == "SHORT":
@@ -45,48 +53,48 @@ def webhook():
 
     strength = "STRONG"
 
-    # === ЛОГИКА ===
+    # === ATR ЛОГИКА ===
     entry = price
-    max_stop_distance = price * 0.05
+    atr_multiplier = 1.5
 
     if signal == "LONG":
-        structure_stop = price * 0.97
-        stop = max(structure_stop, price - max_stop_distance)
-
+        stop = price - atr * atr_multiplier
     elif signal == "SHORT":
-        structure_stop = price * 1.03
-        stop = min(structure_stop, price + max_stop_distance)
+        stop = price + atr * atr_multiplier
 
     risk_distance = abs(price - stop)
 
     if risk_distance <= 0:
-        return "error"
+        return "bad risk"
 
-    # тейки
+    # === ТЕЙКИ ===
     if signal == "LONG":
-        tp1 = price + risk_distance * 1.5
-        tp2 = price + risk_distance * 2.5
+        tp1 = price + atr * 2
+        tp2 = price + atr * 3
     else:
-        tp1 = price - risk_distance * 1.5
-        tp2 = price - risk_distance * 2.5
+        tp1 = price - atr * 2
+        tp2 = price - atr * 3
 
-    # риск
+    # === РИСК ===
     deposit = 2000
     risk_percent = 1
-    risk_amount = deposit * (risk_percent / 100)
 
+    risk_amount = deposit * (risk_percent / 100)
     position_size = risk_amount / risk_distance
 
+    # === ТЕКСТ ===
     text = f"""
 📊 СИГНАЛ
 
 Пара: {symbol}
 Тип: {signal_emoji} {signal}
 Сила: {strength}
-Оценка: A+ (сильный вход)
+Оценка: A+ (ATR модель)
+
+📈 ATR: {atr:.5f}
 
 🎯 Вход: {entry:.5f}
-🛑 Стоп: {stop:.5f} (≤5%)
+🛑 Стоп: {stop:.5f}
 
 🎯 Тейки:
 TP1: {tp1:.5f}
@@ -96,6 +104,7 @@ TP2: {tp2:.5f}
 📦 Объём: {position_size:.2f}
 """
 
+    # === ЛОГОТИП (preview) ===
     logo_url = get_coin_logo(symbol)
 
     requests.post(
