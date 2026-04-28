@@ -3,6 +3,7 @@ import requests
 
 app = Flask(__name__)
 
+# === ТВОИ ДАННЫЕ ===
 TOKEN = "8613876101:AAEbC4ldoDdDOREv6-pxxZ5d-Qqv6usQ3P4"
 CHAT_ID = "7086903720"
 
@@ -11,57 +12,78 @@ CHAT_ID = "7086903720"
 def webhook():
     data = request.json
 
+    # =========================
+    # ПОЛУЧЕНИЕ ДАННЫХ ИЗ TV
+    # =========================
     symbol = data.get("symbol", "UNKNOWN")
     price = float(data.get("price", 0))
     signal = data.get("signal", "N/A")
     atr = float(data.get("atr", 0))
 
-    if atr == 0:
-        return "no atr"
-
-    # --- тип сигнала ---
-    signal_emoji = "🟢" if signal == "LONG" else "🔴"
-    strength = "STRONG"
-
-    # --- ATR интерпретация ---
-    if atr < price * 0.003:
-        atr_comment = "низкая волатильность"
-    elif atr < price * 0.007:
-        atr_comment = "нормальная волатильность"
-    else:
-        atr_comment = "высокая волатильность"
-
-    # --- ATR логика ---
+    # =========================
+    # БАЗОВАЯ ЛОГИКА
+    # =========================
     entry = price
 
-    stop_distance = atr * 1.5
-    tp1_distance = atr * 2
-    tp2_distance = atr * 3
+    # ATR СТОП
+    atr_mult = 1.5
+    stop_distance = atr * atr_mult
 
     if signal == "LONG":
-        stop = entry - stop_distance
-        tp1 = entry + tp1_distance
-        tp2 = entry + tp2_distance
+        stop = price - stop_distance
+    elif signal == "SHORT":
+        stop = price + stop_distance
     else:
-        stop = entry + stop_distance
-        tp1 = entry - tp1_distance
-        tp2 = entry - tp2_distance
+        return "no signal"
 
-    # --- риск ---
+    # =========================
+    # RISK / TP
+    # =========================
+    risk_distance = abs(price - stop)
+
+    if signal == "LONG":
+        tp1 = price + risk_distance * 1.5
+        tp2 = price + risk_distance * 2.5
+    else:
+        tp1 = price - risk_distance * 1.5
+        tp2 = price - risk_distance * 2.5
+
+    # =========================
+    # ATR АНАЛИЗ
+    # =========================
+    if atr < price * 0.003:
+        atr_comment = "низкая волатильность (вялый рынок)"
+    elif atr < price * 0.01:
+        atr_comment = "нормальная волатильность"
+    else:
+        atr_comment = "высокая волатильность (осторожно)"
+
+    # =========================
+    # РИСК-МЕНЕДЖМЕНТ
+    # =========================
     deposit = 2000
     risk_percent = 1
 
     risk_amount = deposit * (risk_percent / 100)
-    position_size = risk_amount / stop_distance
 
-    # --- текст ---
+    if risk_distance > 0:
+        position_size = risk_amount / risk_distance
+    else:
+        position_size = 0
+
+    # =========================
+    # СИГНАЛ (ТЕКСТ)
+    # =========================
+    direction_icon = "🟢" if signal == "LONG" else "🔴"
+
     text = f"""
 📊 СИГНАЛ — {symbol}
 
-{signal_emoji} {signal} | {strength}
+{direction_icon} {signal} | STRONG
 A+ (ATR модель)
 
-📈 ATR: {atr:.2f} ({atr_comment})
+📈 ATR: {atr:.2f}
+({atr_comment})
 
 🎯 Вход: {entry:.2f}
 🛑 Стоп: {stop:.2f}
@@ -74,6 +96,9 @@ TP2: {tp2:.2f}
 📦 Объём: {position_size:.4f}
 """
 
+    # =========================
+    # ОТПРАВКА В TELEGRAM
+    # =========================
     requests.post(
         f"https://api.telegram.org/bot{TOKEN}/sendMessage",
         json={
