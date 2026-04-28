@@ -7,22 +7,6 @@ TOKEN = "8613876101:AAEbC4ldoDdDOREv6-pxxZ5d-Qqv6usQ3P4"
 CHAT_ID = "7086903720"
 
 
-# --- логотип ---
-def get_coin_logo(symbol):
-    symbol = symbol.replace("USDT", "").lower()
-
-    mapping = {
-        "btc": "bitcoin",
-        "eth": "ethereum",
-        "sol": "solana",
-        "bnb": "binancecoin"
-    }
-
-    coin_id = mapping.get(symbol, symbol)
-
-    return f"https://assets.coingecko.com/coins/images/1/large/{coin_id}.png"
-
-
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.json
@@ -35,9 +19,17 @@ def webhook():
     if atr == 0:
         return "no atr"
 
-    # --- логика сигнала ---
+    # --- тип сигнала ---
     signal_emoji = "🟢" if signal == "LONG" else "🔴"
     strength = "STRONG"
+
+    # --- ATR интерпретация ---
+    if atr < price * 0.003:
+        atr_comment = "низкая волатильность"
+    elif atr < price * 0.007:
+        atr_comment = "нормальная волатильность"
+    else:
+        atr_comment = "высокая волатильность"
 
     # --- ATR логика ---
     entry = price
@@ -62,17 +54,14 @@ def webhook():
     risk_amount = deposit * (risk_percent / 100)
     position_size = risk_amount / stop_distance
 
-    # --- логотип ---
-    logo_url = get_coin_logo(symbol)
+    # --- текст ---
+    text = f"""
+📊 СИГНАЛ — {symbol}
 
-    # --- текст (HTML preview фикс) ---
-    text = f"""<a href="{logo_url}">‎</a>
-📊 <b>СИГНАЛ — {symbol}</b>
-
-{signal_emoji} <b>{signal}</b> | {strength}
+{signal_emoji} {signal} | {strength}
 A+ (ATR модель)
 
-📈 ATR: {atr:.2f}
+📈 ATR: {atr:.2f} ({atr_comment})
 
 🎯 Вход: {entry:.2f}
 🛑 Стоп: {stop:.2f}
@@ -89,9 +78,7 @@ TP2: {tp2:.2f}
         f"https://api.telegram.org/bot{TOKEN}/sendMessage",
         json={
             "chat_id": CHAT_ID,
-            "text": text,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": False
+            "text": text
         }
     )
 
