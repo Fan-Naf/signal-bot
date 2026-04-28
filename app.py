@@ -166,14 +166,11 @@ TP2: {tp2:.5f}
     # отправка в Telegram
     logo_url = get_coin_logo(symbol)
 
-    requests.post(
-    f"https://api.telegram.org/bot{TOKEN}/sendPhoto",
+requests.post(
+    f"https://api.telegram.org/bot{TOKEN}/sendMessage",
     data={
         "chat_id": CHAT_ID,
-        "caption": text
-    },
-    files={
-        "photo": requests.get(logo_url).content
+        "text": f"{logo_url}\n{text}"
     }
 )
 
