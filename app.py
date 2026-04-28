@@ -106,7 +106,7 @@ def webhook():
 📊 СИГНАЛ — {symbol}
 
 {direction_icon} {signal} | STRONG
-A+ (ATR модель)
+Оценка: {grade} ({comment})
 
 📈 ATR: {atr:.2f}
 ({atr_comment})
