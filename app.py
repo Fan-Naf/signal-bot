@@ -11,6 +11,19 @@ CHAT_ID = "7086903720"
 last_signal_time = 0
 last_signal_type = None
 
+def get_coin_logo(symbol):
+    symbol = symbol.replace("USDT", "").lower()
+
+    mapping = {
+        "btc": "bitcoin",
+        "eth": "ethereum",
+        "sol": "solana",
+        "bnb": "binancecoin"
+    }
+
+    coin_id = mapping.get(symbol, symbol)
+
+    return f"https://assets.coingecko.com/coins/images/1/large/{coin_id}.png"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -151,10 +164,18 @@ TP2: {tp2:.5f}
 """
 
     # отправка в Telegram
+    logo_url = get_coin_logo(symbol)
+
     requests.post(
-        f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-        json={"chat_id": CHAT_ID, "text": text}
-    )
+    f"https://api.telegram.org/bot{TOKEN}/sendPhoto",
+    data={
+        "chat_id": CHAT_ID,
+        "caption": text
+    },
+    files={
+        "photo": requests.get(logo_url).content
+    }
+)
 
     # обновляем состояние
     last_signal_time = current_time
