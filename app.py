@@ -49,6 +49,32 @@ def webhook():
         tp2 = price - risk_distance * 2.5
 
     # =========================
+    # ОЦЕНКА СИГНАЛА (A / B / C)
+    # =========================
+
+    # ATR в процентах от цены
+    atr_percent = atr / price if price > 0 else 0
+
+    # базовая оценка
+    grade = "B"
+    comment = "средний вход"
+
+    # 🟢 A+ (идеальные условия)
+    if 0.004 < atr_percent < 0.012 and risk_distance < price * 0.02:
+        grade = "A+"
+        comment = "сильный вход"
+
+    # 🟡 B (норм)
+    elif 0.002 < atr_percent <= 0.02:
+        grade = "B"
+        comment = "нормальный рынок"
+
+    # 🔴 C (плохо)
+    else:
+        grade = "C"
+        comment = "лучше пропустить"
+    
+    # =========================
     # ATR АНАЛИЗ
     # =========================
     if atr < price * 0.003:
