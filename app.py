@@ -7,6 +7,7 @@ TOKEN = "8613876101:AAEbC4ldoDdDOREv6-pxxZ5d-Qqv6usQ3P4"
 CHAT_ID = "7086903720"
 
 
+# --- логотип ---
 def get_coin_logo(symbol):
     symbol = symbol.replace("USDT", "").lower()
 
@@ -27,91 +28,69 @@ def webhook():
     data = request.json
 
     symbol = data.get("symbol", "UNKNOWN")
-
-    try:
-        price = float(data.get("price", 0))
-    except:
-        return "invalid price"
-
-    try:
-        atr = float(data.get("atr", 0))
-    except:
-        return "invalid atr"
+    price = float(data.get("price", 0))
+    signal = data.get("signal", "N/A")
+    atr = float(data.get("atr", 0))
 
     if atr == 0:
         return "no atr"
 
-    signal = data.get("signal", "N/A")
-
-    # === СИГНАЛ ===
-    if signal == "LONG":
-        signal_emoji = "🟢"
-    elif signal == "SHORT":
-        signal_emoji = "🔴"
-    else:
-        return "no signal"
-
+    # --- логика сигнала ---
+    signal_emoji = "🟢" if signal == "LONG" else "🔴"
     strength = "STRONG"
 
-    # === ATR ЛОГИКА ===
+    # --- ATR логика ---
     entry = price
-    atr_multiplier = 1.5
+
+    stop_distance = atr * 1.5
+    tp1_distance = atr * 2
+    tp2_distance = atr * 3
 
     if signal == "LONG":
-        stop = price - atr * atr_multiplier
-    elif signal == "SHORT":
-        stop = price + atr * atr_multiplier
-
-    risk_distance = abs(price - stop)
-
-    if risk_distance <= 0:
-        return "bad risk"
-
-    # === ТЕЙКИ ===
-    if signal == "LONG":
-        tp1 = price + atr * 2
-        tp2 = price + atr * 3
+        stop = entry - stop_distance
+        tp1 = entry + tp1_distance
+        tp2 = entry + tp2_distance
     else:
-        tp1 = price - atr * 2
-        tp2 = price - atr * 3
+        stop = entry + stop_distance
+        tp1 = entry - tp1_distance
+        tp2 = entry - tp2_distance
 
-    # === РИСК ===
+    # --- риск ---
     deposit = 2000
     risk_percent = 1
 
     risk_amount = deposit * (risk_percent / 100)
-    position_size = risk_amount / risk_distance
+    position_size = risk_amount / stop_distance
 
-    # === ТЕКСТ ===
-    text = f"""
-📊 СИГНАЛ
+    # --- логотип ---
+    logo_url = get_coin_logo(symbol)
 
-Пара: {symbol}
-Тип: {signal_emoji} {signal}
-Сила: {strength}
-Оценка: A+ (ATR модель)
+    # --- текст (HTML preview фикс) ---
+    text = f"""<a href="{logo_url}">‎</a>
+📊 <b>СИГНАЛ — {symbol}</b>
 
-📈 ATR: {atr:.5f}
+{signal_emoji} <b>{signal}</b> | {strength}
+A+ (ATR модель)
 
-🎯 Вход: {entry:.5f}
-🛑 Стоп: {stop:.5f}
+📈 ATR: {atr:.2f}
+
+🎯 Вход: {entry:.2f}
+🛑 Стоп: {stop:.2f}
 
 🎯 Тейки:
-TP1: {tp1:.5f}
-TP2: {tp2:.5f}
+TP1: {tp1:.2f}
+TP2: {tp2:.2f}
 
-💰 Риск: ${risk_amount}
-📦 Объём: {position_size:.2f}
+💰 Риск: ${risk_amount:.2f}
+📦 Объём: {position_size:.4f}
 """
-
-    # === ЛОГОТИП (preview) ===
-    logo_url = get_coin_logo(symbol)
 
     requests.post(
         f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-        data={
+        json={
             "chat_id": CHAT_ID,
-            "text": f"{logo_url}\n{text}",
+            "text": text,
+            "parse_mode": "HTML",
             "disable_web_page_preview": False
         }
     )
