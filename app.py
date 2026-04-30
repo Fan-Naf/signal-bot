@@ -28,6 +28,23 @@ def send_telegram(text):
     )
 
 # =========================
+# FEAR & GREED API
+# =========================
+def get_fear_greed():
+    try:
+        url = "https://api.alternative.me/fng/?limit=1"
+        response = requests.get(url, timeout=5)
+        data = response.json()
+
+        value = int(data["data"][0]["value"])
+        classification = data["data"][0]["value_classification"]
+
+        return value, classification
+
+    except:
+        return None, "no data"
+
+# =========================
 # WEBHOOK
 # =========================
 @app.route('/webhook', methods=['POST'])
@@ -73,7 +90,6 @@ def webhook():
         # =========================
         score = 0
 
-        # тренд
         if ema_distance > 0.005:
             score += 30
         elif ema_distance > 0.002:
@@ -81,13 +97,11 @@ def webhook():
         else:
             score += 5
 
-        # волатильность
         if 0.004 < atr_percent < 0.015:
             score += 20
         elif atr_percent > 0.002:
             score += 10
 
-        # позиция в диапазоне
         if 0.3 < range_position < 0.7:
             score += 20
         elif 0.2 < range_position < 0.8:
@@ -95,16 +109,13 @@ def webhook():
         else:
             score += 5
 
-        # бонус за структуру
         score += 10
 
-        # штраф за перегрев
         if atr_percent > 0.02:
             score -= 10
 
         score = max(0, min(score, 100))
 
-        # рейтинг
         if score >= 80:
             rating = "A+ 🔥"
         elif score >= 60:
@@ -118,7 +129,7 @@ def webhook():
         # СТОП (АДАПТИВНЫЙ)
         # =========================
         if score >= 80:
-            stop_distance = atr * 2      # даём рынку дышать
+            stop_distance = atr * 2
         else:
             stop_distance = atr * 1.5
 
@@ -139,7 +150,7 @@ def webhook():
             return "invalid risk"
 
         # =========================
-        # РИСК-МЕНЕДЖМЕНТ
+        # РИСК
         # =========================
         risk_amount = DEPOSIT * (RISK_PERCENT / 100)
         position_size = risk_amount / risk_distance
@@ -155,6 +166,21 @@ def webhook():
             atr_comment = "высокая волатильность"
 
         # =========================
+        # 🧠 FEAR & GREED
+        # =========================
+        fg_value, fg_label = get_fear_greed()
+
+        fg_text = ""
+        if fg_value is not None:
+            fg_text = f"\n🧠 Рынок: {fg_value} ({fg_label})"
+
+            # мягкое предупреждение
+            if fg_value > 75:
+                fg_text += "\n⚠️ Перегретый рынок"
+            elif fg_value < 25:
+                fg_text += "\n⚠️ Паника на рынке"
+
+        # =========================
         # СООБЩЕНИЕ
         # =========================
         icon = "🟢" if signal == "LONG" else "🔴"
@@ -164,6 +190,7 @@ def webhook():
 
 {icon} {signal}
 📊 Рейтинг: {score}/100 ({rating})
+{fg_text}
 
 📈 ATR: {atr:.6f}
 ({atr_comment})
