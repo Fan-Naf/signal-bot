@@ -19,7 +19,7 @@ ALLOWED_SYMBOLS = {
 }
 
 # =========================
-# ВСПОМОГАТЕЛЬНЫЕ
+# TELEGRAM
 # =========================
 def send_telegram(text):
     requests.post(
@@ -35,6 +35,9 @@ def webhook():
     data = request.json
 
     try:
+        # =========================
+        # ДАННЫЕ
+        # =========================
         symbol = data.get("symbol", "").replace(".P", "")
         price = float(data.get("price", 0))
         signal = data.get("signal", "")
@@ -48,7 +51,7 @@ def webhook():
         range_position = float(data.get("range_position", 0))
 
         # =========================
-        # ПРОВЕРКИ
+        # ФИЛЬТРЫ
         # =========================
         if symbol not in ALLOWED_SYMBOLS:
             return "skip symbol"
@@ -66,10 +69,60 @@ def webhook():
             return "long at top"
 
         # =========================
-        # РАСЧЁТ
+        # РЕЙТИНГ
         # =========================
+        score = 0
+
+        # тренд
+        if ema_distance > 0.005:
+            score += 30
+        elif ema_distance > 0.002:
+            score += 20
+        else:
+            score += 5
+
+        # волатильность
+        if 0.004 < atr_percent < 0.015:
+            score += 20
+        elif atr_percent > 0.002:
+            score += 10
+
+        # позиция в диапазоне
+        if 0.3 < range_position < 0.7:
+            score += 20
+        elif 0.2 < range_position < 0.8:
+            score += 10
+        else:
+            score += 5
+
+        # бонус за структуру
+        score += 10
+
+        # штраф за перегрев
+        if atr_percent > 0.02:
+            score -= 10
+
+        score = max(0, min(score, 100))
+
+        # рейтинг
+        if score >= 80:
+            rating = "A+ 🔥"
+        elif score >= 60:
+            rating = "B ⚙️"
+        elif score >= 40:
+            rating = "C ⚠️"
+        else:
+            rating = "D ❌"
+
+        # =========================
+        # СТОП (АДАПТИВНЫЙ)
+        # =========================
+        if score >= 80:
+            stop_distance = atr * 2      # даём рынку дышать
+        else:
+            stop_distance = atr * 1.5
+
         entry = price
-        stop_distance = atr * 1.5
 
         if signal == "LONG":
             stop = entry - stop_distance
@@ -82,15 +135,14 @@ def webhook():
 
         risk_distance = abs(entry - stop)
 
+        if risk_distance <= 0:
+            return "invalid risk"
+
         # =========================
         # РИСК-МЕНЕДЖМЕНТ
         # =========================
         risk_amount = DEPOSIT * (RISK_PERCENT / 100)
-
-        if risk_distance > 0:
-            position_size = risk_amount / risk_distance
-        else:
-            position_size = 0
+        position_size = risk_amount / risk_distance
 
         # =========================
         # ATR КОММЕНТАРИЙ
@@ -103,42 +155,6 @@ def webhook():
             atr_comment = "высокая волатильность"
 
         # =========================
-        # РЕЙТИНГ
-        # =========================
-        score = 0
-
-        if ema_distance > 0.005:
-            score += 30
-        elif ema_distance > 0.002:
-            score += 20
-        else:
-            score += 5
-
-        if 0.004 < atr_percent < 0.015:
-            score += 20
-        elif atr_percent > 0.002:
-            score += 10
-
-        if 0.3 < range_position < 0.7:
-            score += 20
-        elif 0.2 < range_position < 0.8:
-            score += 10
-        else:
-            score += 5
-
-        score += 10
-        score = min(score, 100)
-
-        if score >= 80:
-            rating = "A+ 🔥"
-        elif score >= 60:
-            rating = "B ⚙️"
-        elif score >= 40:
-            rating = "C ⚠️"
-        else:
-            rating = "D ❌"
-
-        # =========================
         # СООБЩЕНИЕ
         # =========================
         icon = "🟢" if signal == "LONG" else "🔴"
@@ -149,14 +165,15 @@ def webhook():
 {icon} {signal}
 📊 Рейтинг: {score}/100 ({rating})
 
-📈 ATR: {atr:.4f}
+📈 ATR: {atr:.6f}
 ({atr_comment})
 
-🎯 Вход: {entry:.4f}
-🛑 Стоп: {stop:.4f}
+🎯 Вход: {entry:.6f}
+🛑 Стоп: {stop:.6f}
 
-🎯 TP1: {tp1:.4f}
-🎯 TP2: {tp2:.4f}
+🎯 Тейки:
+TP1: {tp1:.6f}
+TP2: {tp2:.6f}
 
 💰 Риск: ${risk_amount:.2f}
 📦 Объём: {position_size:.4f}
