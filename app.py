@@ -1,6 +1,8 @@
 from flask import Flask, request
 import requests
 import time
+import json
+from datetime import datetime
 
 app = Flask(__name__)
 
@@ -19,7 +21,6 @@ ALLOWED_SYMBOLS = {
     "INJUSDT","FETUSDT"
 }
 
-# анти-дубли сигналов
 LAST_SIGNAL_TIME = {}
 COOLDOWN_SECONDS = 60 * 60 * 6  # 6 часов
 
@@ -33,7 +34,14 @@ def send_telegram(text):
     )
 
 # =========================
-# FEAR & GREED API
+# LOGGING (новое)
+# =========================
+def log_trade(data):
+    with open("trades_log.json", "a") as f:
+        f.write(json.dumps(data) + "\n")
+
+# =========================
+# FEAR & GREED
 # =========================
 def get_fear_greed():
     try:
@@ -49,6 +57,29 @@ def get_fear_greed():
         return None, "no data"
 
 # =========================
+# MARKET PHASE (новое)
+# =========================
+def get_market_phase(atr_percent, ema_distance):
+    if atr_percent < 0.004:
+        return "FLAT ❄️"
+    if ema_distance > 0.005:
+        return "STRONG TREND 🚀"
+    if ema_distance > 0.003:
+        return "TREND 📈"
+    return "WEAK ⚠️"
+
+# =========================
+# CONFIDENCE (новое)
+# =========================
+def get_confidence(score):
+    if score >= 80:
+        return "HIGH"
+    elif score >= 60:
+        return "MEDIUM"
+    else:
+        return "LOW"
+
+# =========================
 # WEBHOOK
 # =========================
 @app.route('/webhook', methods=['POST'])
@@ -56,9 +87,6 @@ def webhook():
     data = request.json
 
     try:
-        # =========================
-        # ДАННЫЕ
-        # =========================
         symbol = data.get("symbol", "").replace(".P", "")
         price = float(data.get("price", 0))
         signal = data.get("signal", "")
@@ -74,7 +102,7 @@ def webhook():
         now = time.time()
 
         # =========================
-        # ФИЛЬТРЫ
+        # БАЗОВЫЕ ФИЛЬТРЫ
         # =========================
         if symbol not in ALLOWED_SYMBOLS:
             return "skip symbol"
@@ -82,21 +110,21 @@ def webhook():
         if price <= 0 or atr <= 0:
             return "invalid data"
 
-        # анти-дубли сигналов
         if symbol in LAST_SIGNAL_TIME:
             if now - LAST_SIGNAL_TIME[symbol] < COOLDOWN_SECONDS:
                 return "cooldown active"
 
         # =========================
-        # 🧠 ФИЛЬТР ФАЗЫ РЫНКА
+        # ФАЗА РЫНКА (новое)
         # =========================
+        market_phase = get_market_phase(atr_percent, ema_distance)
+
         if atr_percent < 0.004:
             return "skip - low volatility"
 
         if ema_distance < 0.003:
             return "skip - weak trend"
 
-        # диапазон
         if signal == "SHORT" and range_position < 0.2:
             return "short at bottom"
 
@@ -104,11 +132,10 @@ def webhook():
             return "long at top"
 
         # =========================
-        # 📊 РЕЙТИНГ
+        # РЕЙТИНГ
         # =========================
         score = 0
 
-        # тренд
         if ema_distance > 0.005:
             score += 30
         elif ema_distance > 0.002:
@@ -116,13 +143,11 @@ def webhook():
         else:
             score += 5
 
-        # волатильность
         if 0.004 < atr_percent < 0.015:
             score += 20
         elif atr_percent > 0.002:
             score += 10
 
-        # позиция
         if 0.3 < range_position < 0.7:
             score += 20
         elif 0.2 < range_position < 0.8:
@@ -138,7 +163,7 @@ def webhook():
         score = max(0, min(score, 100))
 
         # =========================
-        # 🧠 DECISION LAYER
+        # DECISION
         # =========================
         if score >= 75:
             decision = "TRADE"
@@ -146,6 +171,11 @@ def webhook():
             decision = "CAREFUL"
         else:
             return "skip - weak signal"
+
+        # =========================
+        # CONFIDENCE
+        # =========================
+        confidence = get_confidence(score)
 
         # =========================
         # ГРЕЙД
@@ -163,7 +193,7 @@ def webhook():
         # СТОП
         # =========================
         if score >= 80:
-            stop_distance = atr * 2.2  # увеличен
+            stop_distance = atr * 2.2
         else:
             stop_distance = atr * 1.5
 
@@ -198,11 +228,6 @@ def webhook():
         if fg_value is not None:
             fg_text = f"\n🧠 Рынок: {fg_value} ({fg_label})"
 
-            if fg_value > 75:
-                fg_text += "\n⚠️ Перегретый рынок"
-            elif fg_value < 25:
-                fg_text += "\n⚠️ Паника на рынке"
-
         # =========================
         # RR
         # =========================
@@ -210,12 +235,22 @@ def webhook():
         rr2 = abs(tp2 - entry) / risk_distance
 
         # =========================
-        # СОХРАНЯЕМ СИГНАЛ
+        # СОХРАНЕНИЕ
         # =========================
         LAST_SIGNAL_TIME[symbol] = now
 
+        log_trade({
+            "time": datetime.utcnow().isoformat(),
+            "symbol": symbol,
+            "signal": signal,
+            "score": score,
+            "confidence": confidence,
+            "atr_percent": atr_percent,
+            "ema_distance": ema_distance
+        })
+
         # =========================
-        # СООБЩЕНИЕ
+        # TELEGRAM
         # =========================
         icon = "🟢" if signal == "LONG" else "🔴"
 
@@ -225,6 +260,8 @@ def webhook():
 {icon} {signal}
 📊 Рейтинг: {score}/100 ({rating})
 🧠 Решение: {decision}
+📡 Фаза: {market_phase}
+📊 Confidence: {confidence}
 {fg_text}
 
 📈 ATR: {atr:.6f}
@@ -253,7 +290,7 @@ TP2: {tp2:.6f}
 
 @app.route('/')
 def home():
-    return "Bot v1.1 is running"
+    return "Bot v1.1.1 running"
 
 
 if __name__ == "__main__":
