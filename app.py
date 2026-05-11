@@ -19,9 +19,10 @@ RISK_PERCENT = float(os.getenv("RISK_PERCENT", 1))
 COOLDOWN_SECONDS = int(os.getenv("COOLDOWN_HOURS", 6)) * 3600
 
 # =========================
-# STATE (cooldown)
+# STATE
 # =========================
 STATE_FILE = "state.json"
+BTC_CACHE = {"trend": "UNKNOWN", "time": 0}
 
 def load_state():
     if not os.path.exists(STATE_FILE):
@@ -69,7 +70,7 @@ def send_telegram(text):
         print("Telegram error:", e)
 
 # =========================
-# LOGGING
+# LOG
 # =========================
 LOG_FILE = "trades_log.json"
 
@@ -81,12 +82,19 @@ def log_trade(data):
         f.write(json.dumps(data, ensure_ascii=False) + "\n")
 
 # =========================
-# BTC TREND
+# BTC TREND (STABLE)
 # =========================
 def get_btc_trend():
+    now = time.time()
+
+    # кеш 60 секунд
+    if now - BTC_CACHE["time"] < 60:
+        return BTC_CACHE["trend"]
+
     try:
         r = requests.get(
-            "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=50"
+            "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=50",
+            timeout=5
         )
         data = r.json()
 
@@ -94,7 +102,12 @@ def get_btc_trend():
         ema50 = sum(closes[-50:]) / 50
         last = closes[-1]
 
-        return "UP" if last > ema50 else "DOWN"
+        trend = "UP" if last > ema50 else "DOWN"
+
+        BTC_CACHE["trend"] = trend
+        BTC_CACHE["time"] = now
+
+        return trend
 
     except:
         return "UNKNOWN"
@@ -110,8 +123,7 @@ def calculate_position_size(balance, risk_percent, entry, stop):
         return 0
 
     size = risk_amount / risk_per_unit
-    step = 0.001
-    return round(size / step) * step
+    return round(size, 3)
 
 # =========================
 # WEBHOOK
@@ -135,21 +147,26 @@ def webhook():
         atr_percent = safe_float(data.get("atr_percent"))
         ema_distance = safe_float(data.get("ema_distance"))
         range_position = safe_float(data.get("range_position"))
-        fg_value = safe_float(data.get("fear_greed"))
+        fg_value = data.get("fear_greed")
 
         if is_cooldown(symbol):
             return "cooldown active"
 
         # =========================
-        # BTC FILTER
+        # BTC
         # =========================
         btc_trend = get_btc_trend()
         btc_penalty = 0
+
+        if btc_trend == "UNKNOWN":
+            btc_penalty = -5
 
         if signal == "LONG" and btc_trend == "DOWN":
             btc_penalty = -10
         elif signal == "SHORT" and btc_trend == "UP":
             btc_penalty = -10
+
+        btc_context = "OK ✅" if btc_penalty == 0 else "WEAK ⚠️"
 
         # =========================
         # SCORING
@@ -181,7 +198,6 @@ def webhook():
             score -= 10
 
         score += btc_penalty
-
         score = max(0, min(score, 100))
 
         if score < 60:
@@ -202,13 +218,10 @@ def webhook():
             rating = "C"
             confidence = "LOW"
 
-        # =========================
-        # PHASE
-        # =========================
         phase = "STRONG TREND 🚀" if ema_distance > 0.005 else "TREND"
 
         # =========================
-        # STOPS + TP
+        # TP / SL
         # =========================
         stop_distance = atr * (2.2 if score >= 80 else 1.5)
 
@@ -229,11 +242,20 @@ def webhook():
 
         icon = "🟢" if signal == "LONG" else "🔴"
 
-        fg_label = "Neutral"
-        if fg_value < 30:
-            fg_label = "Fear"
-        elif fg_value > 70:
-            fg_label = "Greed"
+        # =========================
+        # FEAR GREED
+        # =========================
+        if fg_value is None:
+            fg_text = "—"
+        else:
+            fg_value = int(fg_value)
+            if fg_value < 30:
+                fg_label = "Fear"
+            elif fg_value > 70:
+                fg_label = "Greed"
+            else:
+                fg_label = "Neutral"
+            fg_text = f"{fg_value} ({fg_label})"
 
         # =========================
         # MESSAGE
@@ -247,11 +269,11 @@ def webhook():
 🛰 Фаза: {phase}
 📡 Confidence: {confidence}
 
-📊 BTC: {btc_trend}
+📊 BTC: {btc_trend} ({btc_context})
 
-🧠 Рынок: {int(fg_value) if fg_value else "—"} ({fg_label})
+🧠 Рынок: {fg_text}
 
-📈 ATR: {round(atr, 6)}
+📈 ATR: {round(atr, 2)}
 
 🎯 Вход: {price}
 🛑 Стоп: {round(stop, 6)}
@@ -290,7 +312,7 @@ TP2: {round(tp2, 6)}
 
 @app.route('/')
 def home():
-    return "Bot v1.4 FINAL running 🚀"
+    return "Bot v1.4.1 PRO running 🚀"
 
 
 if __name__ == "__main__":
