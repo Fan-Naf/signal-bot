@@ -18,13 +18,8 @@ DEPOSIT = float(os.getenv("DEPOSIT", 2000))
 RISK_PERCENT = float(os.getenv("RISK_PERCENT", 1))
 COOLDOWN_SECONDS = int(os.getenv("COOLDOWN_HOURS", 6)) * 3600
 
-ALLOWED_SYMBOLS = {
-    "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "LINKUSDT",
-    "AVAXUSDT", "ARBUSDT", "OPUSDT", "INJUSDT", "FETUSDT"
-}
-
 # =========================
-# STATE (FIXED)
+# STATE
 # =========================
 STATE_FILE = "state.json"
 
@@ -72,7 +67,7 @@ def send_telegram(text):
         print("Telegram error:", e)
 
 # =========================
-# LOGGING + ROTATION
+# LOGGING
 # =========================
 LOG_FILE = "trades_log.json"
 
@@ -84,44 +79,37 @@ def log_trade(data):
         f.write(json.dumps(data, ensure_ascii=False) + "\n")
 
 # =========================
-# MARKET DATA
+# BTC TREND (NEW)
 # =========================
-def get_fear_greed():
+def get_btc_trend():
     try:
-        r = requests.get("https://api.alternative.me/fng/?limit=1", timeout=5)
-        d = r.json()
-        return int(d["data"][0]["value"]), d["data"][0]["value_classification"]
+        r = requests.get("https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=50")
+        data = r.json()
+
+        closes = [float(c[4]) for c in data]
+
+        ema50 = sum(closes[-50:]) / 50
+        last = closes[-1]
+
+        if last > ema50:
+            return "UP"
+        else:
+            return "DOWN"
+
     except:
-        return None, "no data"
-
-def get_market_phase(atr_percent, ema_distance):
-    if atr_percent < 0.004:
-        return "FLAT ❄️"
-    if ema_distance > 0.005:
-        return "STRONG TREND 🚀"
-    if ema_distance > 0.003:
-        return "TREND 📈"
-    return "WEAK ⚠️"
-
-def get_confidence(score):
-    if score >= 80:
-        return "HIGH"
-    elif score >= 60:
-        return "MEDIUM"
-    return "LOW"
+        return "UNKNOWN"
 
 # =========================
-# POSITION SIZE (FIXED)
+# POSITION SIZE
 # =========================
 def calculate_position_size(balance, risk_percent, entry, stop):
     risk_amount = balance * (risk_percent / 100)
     risk_per_unit = abs(entry - stop)
+
     if risk_per_unit == 0:
         return 0
 
     size = risk_amount / risk_per_unit
-
-    # округление
     step = 0.001
     return round(size / step) * step
 
@@ -131,46 +119,40 @@ def calculate_position_size(balance, risk_percent, entry, stop):
 @app.route('/webhook', methods=['POST'])
 def webhook():
 
-    # SECURITY
     if WEBHOOK_SECRET:
         secret = request.headers.get('X-Webhook-Secret') or request.args.get('secret')
         if secret != WEBHOOK_SECRET:
             abort(403)
 
     data = request.json
-    if not data:
-        return "no data"
 
     try:
-        symbol = data.get("symbol", "").replace(".P", "").upper()
+        symbol = data.get("symbol", "").upper()
         price = safe_float(data.get("price"))
         signal = data.get("signal", "").upper()
-        atr = safe_float(data.get("atr"))
 
+        atr = safe_float(data.get("atr"))
         atr_percent = safe_float(data.get("atr_percent"))
         ema_distance = safe_float(data.get("ema_distance"))
         range_position = safe_float(data.get("range_position"))
 
-        if symbol not in ALLOWED_SYMBOLS:
-            return "skip symbol"
-        if price <= 0 or atr <= 0 or signal not in ["LONG", "SHORT"]:
-            return "invalid data"
-
         if is_cooldown(symbol):
             return "cooldown active"
 
-        # FILTERS
-        if atr_percent < 0.004:
-            return "skip - low volatility"
-        if ema_distance < 0.003:
-            return "skip - weak trend"
+        # =========================
+        # BTC FILTER
+        # =========================
+        btc_trend = get_btc_trend()
+        btc_penalty = 0
 
-        if signal == "SHORT" and range_position < 0.2:
-            return "short at bottom"
-        if signal == "LONG" and range_position > 0.8:
-            return "long at top"
+        if signal == "LONG" and btc_trend == "DOWN":
+            btc_penalty = -10
+        elif signal == "SHORT" and btc_trend == "UP":
+            btc_penalty = -10
 
-        # SCORING
+        # =========================
+        # SCORING (ORIGINAL + BTC)
+        # =========================
         score = 0
 
         if ema_distance > 0.005: score += 30
@@ -187,79 +169,81 @@ def webhook():
         score += 10
         if atr_percent > 0.02: score -= 10
 
+        # BTC influence
+        score += btc_penalty
+
         score = max(0, min(score, 100))
 
         if score < 60:
-            return "skip - weak signal"
+            return "skip - weak"
 
         decision = "TRADE" if score >= 75 else "CAREFUL"
-        confidence = get_confidence(score)
 
-        rating = "A+ 🔥" if score >= 80 else "B ⚙️" if score >= 60 else "C ⚠️"
-
-        # STOP + TP
+        # =========================
+        # STOPS + TP
+        # =========================
         stop_distance = atr * (2.2 if score >= 80 else 1.5)
-        entry = price
 
         if signal == "LONG":
-            stop = entry - stop_distance
-            tp1 = entry + stop_distance * 1.5
-            tp2 = entry + stop_distance * 2.5
+            stop = price - stop_distance
+            tp1 = price + stop_distance * 1.5
+            tp2 = price + stop_distance * 2.5
         else:
-            stop = entry + stop_distance
-            tp1 = entry - stop_distance * 1.5
-            tp2 = entry - stop_distance * 2.5
+            stop = price + stop_distance
+            tp1 = price - stop_distance * 1.5
+            tp2 = price - stop_distance * 2.5
 
-        size = calculate_position_size(DEPOSIT, RISK_PERCENT, entry, stop)
+        size = calculate_position_size(DEPOSIT, RISK_PERCENT, price, stop)
 
-        fg_value, fg_label = get_fear_greed()
-        fg_text = f"\n🧠 Рынок: {fg_value} ({fg_label})" if fg_value else ""
+        # =========================
+        # MESSAGE (UPDATED)
+        # =========================
+        text = f"""
+📊 {symbol}
 
-        rr1 = abs(tp1 - entry) / abs(entry - stop)
-        rr2 = abs(tp2 - entry) / abs(entry - stop)
+Signal: {signal}
+BTC Trend: {btc_trend}
 
+Score: {score}
+Decision: {decision}
+
+Entry: {price}
+Stop: {round(stop, 4)}
+
+TP1: {round(tp1, 4)} (закрыть 50%)
+TP2: {round(tp2, 4)}
+
+➡ После TP1:
+- стоп в BE
+- держим остаток
+
+Size: {size}
+        """.strip()
+
+        send_telegram(text)
+
+        # =========================
         # LOG
+        # =========================
         log_trade({
             "time": datetime.utcnow().isoformat(),
             "symbol": symbol,
             "signal": signal,
             "score": score,
-            "confidence": confidence
+            "btc_trend": btc_trend,
+            "decision": decision
         })
 
-        icon = "🟢" if signal == "LONG" else "🔴"
-
-        text = f"""
-📊 СИГНАЛ — {symbol}
-
-{icon} {signal}
-📊 Рейтинг: {score}/100 ({rating})
-🧠 Решение: {decision}
-📡 Фаза: {get_market_phase(atr_percent, ema_distance)}
-📊 Confidence: {confidence}{fg_text}
-
-🎯 Вход: {entry:.6f}
-🛑 Стоп: {stop:.6f}
-⚖️ RR: {rr1:.2f} / {rr2:.2f}
-
-TP1: {tp1:.6f}
-TP2: {tp2:.6f}
-
-💰 Риск: ${DEPOSIT * (RISK_PERCENT / 100):.2f}
-📦 Объём: {size:.4f}
-        """.strip()
-
-        send_telegram(text)
         return "ok"
 
     except Exception as e:
-        print("Error:", e)
+        print("ERROR:", e)
         return "error", 500
 
 
 @app.route('/')
 def home():
-    return "Bot v1.2 FINAL PRO running 🚀"
+    return "Bot v1.4 running 🚀"
 
 
 if __name__ == "__main__":
