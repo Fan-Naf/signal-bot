@@ -22,7 +22,6 @@ COOLDOWN_SECONDS = int(os.getenv("COOLDOWN_HOURS", 6)) * 3600
 # STATE
 # =========================
 STATE_FILE = "state.json"
-BTC_CACHE = {"trend": "UNKNOWN", "time": 0}
 
 def load_state():
     if not os.path.exists(STATE_FILE):
@@ -82,37 +81,6 @@ def log_trade(data):
         f.write(json.dumps(data, ensure_ascii=False) + "\n")
 
 # =========================
-# BTC TREND (STABLE)
-# =========================
-def get_btc_trend():
-    now = time.time()
-
-    # кеш 60 секунд
-    if now - BTC_CACHE["time"] < 60:
-        return BTC_CACHE["trend"]
-
-    try:
-        r = requests.get(
-            "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=50",
-            timeout=5
-        )
-        data = r.json()
-
-        closes = [float(c[4]) for c in data]
-        ema50 = sum(closes[-50:]) / 50
-        last = closes[-1]
-
-        trend = "UP" if last > ema50 else "DOWN"
-
-        BTC_CACHE["trend"] = trend
-        BTC_CACHE["time"] = now
-
-        return trend
-
-    except:
-        return "UNKNOWN"
-
-# =========================
 # POSITION SIZE
 # =========================
 def calculate_position_size(balance, risk_percent, entry, stop):
@@ -149,17 +117,25 @@ def webhook():
         range_position = safe_float(data.get("range_position"))
         fg_value = data.get("fear_greed")
 
+        # BTC теперь приходит из Pine
+        btc_trend = data.get("btc_trend", "UNKNOWN")
+
         if is_cooldown(symbol):
             return "cooldown active"
 
         # =========================
-        # BTC
+        # DATA VALIDATION
         # =========================
-        btc_trend = get_btc_trend()
+        if atr == 0:
+            return "skip - bad atr"
+
+        # =========================
+        # BTC FILTER
+        # =========================
         btc_penalty = 0
 
         if btc_trend == "UNKNOWN":
-            btc_penalty = -5
+            return "skip - no btc"
 
         if signal == "LONG" and btc_trend == "DOWN":
             btc_penalty = -10
@@ -200,8 +176,11 @@ def webhook():
         score += btc_penalty
         score = max(0, min(score, 100))
 
-        if score < 60:
-            return "skip"
+        # =========================
+        # FILTER C SIGNALS
+        # =========================
+        if score < 70:
+            return "skip - weak"
 
         decision = "TRADE" if score >= 75 else "CAREFUL"
 
@@ -211,12 +190,9 @@ def webhook():
         if score >= 80:
             rating = "A+ 🔥"
             confidence = "HIGH"
-        elif score >= 70:
+        else:
             rating = "B"
             confidence = "MEDIUM"
-        else:
-            rating = "C"
-            confidence = "LOW"
 
         phase = "STRONG TREND 🚀" if ema_distance > 0.005 else "TREND"
 
@@ -281,12 +257,8 @@ def webhook():
 ⚖ RR: {round(tp1_rr, 2)} / {round(tp2_rr, 2)}
 
 🎯 Тейки:
-TP1: {round(tp1, 6)} (закрыть 50%)
+TP1: {round(tp1, 6)}
 TP2: {round(tp2, 6)}
-
-➡ После TP1:
-- стоп в BE
-- держим остаток
 
 💰 Риск: ${round(DEPOSIT * RISK_PERCENT / 100, 2)}
 📦 Объём: {size}
@@ -312,7 +284,7 @@ TP2: {round(tp2, 6)}
 
 @app.route('/')
 def home():
-    return "Bot v1.4.1 PRO running 🚀"
+    return "Bot v1.4.2 running 🚀"
 
 
 if __name__ == "__main__":
