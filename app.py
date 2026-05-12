@@ -94,6 +94,20 @@ def calculate_position_size(balance, risk_percent, entry, stop):
     return round(size, 3)
 
 # =========================
+# BTC PARSER (НОВОЕ)
+# =========================
+def parse_btc_trend(value):
+    try:
+        v = float(value)
+        if v == 1:
+            return "UP"
+        elif v == -1:
+            return "DOWN"
+    except:
+        pass
+    return "UNKNOWN"
+
+# =========================
 # WEBHOOK
 # =========================
 @app.route('/webhook', methods=['POST'])
@@ -117,25 +131,25 @@ def webhook():
         range_position = safe_float(data.get("range_position"))
         fg_value = data.get("fear_greed")
 
-        # BTC теперь приходит из Pine
-        btc_trend = data.get("btc_trend", "UNKNOWN")
+        btc_raw = data.get("btc_trend")
+        btc_trend = parse_btc_trend(btc_raw)
 
         if is_cooldown(symbol):
             return "cooldown active"
 
         # =========================
-        # DATA VALIDATION
+        # VALIDATION
         # =========================
         if atr == 0:
             return "skip - bad atr"
+
+        if btc_trend == "UNKNOWN":
+            return "skip - no btc"
 
         # =========================
         # BTC FILTER
         # =========================
         btc_penalty = 0
-
-        if btc_trend == "UNKNOWN":
-            return "skip - no btc"
 
         if signal == "LONG" and btc_trend == "DOWN":
             btc_penalty = -10
@@ -176,9 +190,6 @@ def webhook():
         score += btc_penalty
         score = max(0, min(score, 100))
 
-        # =========================
-        # FILTER C SIGNALS
-        # =========================
         if score < 70:
             return "skip - weak"
 
@@ -284,7 +295,7 @@ TP2: {round(tp2, 6)}
 
 @app.route('/')
 def home():
-    return "Bot v1.4.2 running 🚀"
+    return "Bot v1.4.2+ running 🚀"
 
 
 if __name__ == "__main__":
