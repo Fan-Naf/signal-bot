@@ -94,7 +94,7 @@ def calculate_position_size(balance, risk_percent, entry, stop):
     return round(size, 3)
 
 # =========================
-# BTC PARSER (НОВОЕ)
+# BTC PARSER
 # =========================
 def parse_btc_trend(value):
     try:
@@ -131,8 +131,10 @@ def webhook():
         range_position = safe_float(data.get("range_position"))
         fg_value = data.get("fear_greed")
 
-        btc_raw = data.get("btc_trend")
-        btc_trend = parse_btc_trend(btc_raw)
+        btc_trend = parse_btc_trend(data.get("btc_trend"))
+        btc_strength = safe_float(data.get("btc_strength"))
+        eth_raw = data.get("eth_trend")
+        eth_trend = "UP" if eth_raw == 1 else "DOWN"
 
         if is_cooldown(symbol):
             return "cooldown active"
@@ -147,19 +149,7 @@ def webhook():
             return "skip - no btc"
 
         # =========================
-        # BTC FILTER
-        # =========================
-        btc_penalty = 0
-
-        if signal == "LONG" and btc_trend == "DOWN":
-            btc_penalty = -10
-        elif signal == "SHORT" and btc_trend == "UP":
-            btc_penalty = -10
-
-        btc_context = "OK ✅" if btc_penalty == 0 else "WEAK ⚠️"
-
-        # =========================
-        # SCORING
+        # BASE SCORING (v1.4)
         # =========================
         score = 0
 
@@ -187,10 +177,37 @@ def webhook():
         if atr_percent > 0.02:
             score -= 10
 
-        score += btc_penalty
+        # =========================
+        # CONTEXT ENGINE v1.5
+        # =========================
+        context_score = 0
+
+        # BTC
+        if signal == "LONG":
+            context_score += 10 if btc_trend == "UP" else -10
+        else:
+            context_score += 10 if btc_trend == "DOWN" else -10
+
+        # ETH
+        if signal == "LONG":
+            context_score += 10 if eth_trend == "UP" else -10
+        else:
+            context_score += 10 if eth_trend == "DOWN" else -10
+
+        # BTC strength
+        if btc_strength > 0.003:
+            context_score += 5
+
+        # FUNDING (заготовка)
+        funding = 0
+
+        score += context_score
         score = max(0, min(score, 100))
 
-        if score < 70:
+        # =========================
+        # FILTER (ослабленный)
+        # =========================
+        if score < 65:
             return "skip - weak"
 
         decision = "TRADE" if score >= 75 else "CAREFUL"
@@ -256,7 +273,7 @@ def webhook():
 🛰 Фаза: {phase}
 📡 Confidence: {confidence}
 
-📊 BTC: {btc_trend} ({btc_context})
+📊 BTC: {btc_trend}
 
 🧠 Рынок: {fg_text}
 
@@ -295,7 +312,7 @@ TP2: {round(tp2, 6)}
 
 @app.route('/')
 def home():
-    return "Bot v1.4.2+ running 🚀"
+    return "Bot v1.5 running 🚀"
 
 
 if __name__ == "__main__":
