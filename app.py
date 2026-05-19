@@ -16,10 +16,12 @@ WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
 
 DEPOSIT = float(os.getenv("DEPOSIT", 2000))
 RISK_PERCENT = float(os.getenv("RISK_PERCENT", 1))
-COOLDOWN_SECONDS = int(os.getenv("COOLDOWN_HOURS", 6)) * 3600
 
 STATE_FILE = "state.json"
 
+# =========================
+# STATE
+# =========================
 def load_state():
     if not os.path.exists(STATE_FILE):
         return {}
@@ -33,7 +35,7 @@ def save_state(state):
 STATE = load_state()
 
 # =========================
-# SAFE
+# UTILS
 # =========================
 def safe_float(x, default=0.0):
     try:
@@ -41,9 +43,6 @@ def safe_float(x, default=0.0):
     except:
         return default
 
-# =========================
-# TELEGRAM
-# =========================
 def send_telegram(text):
     try:
         requests.post(
@@ -54,31 +53,28 @@ def send_telegram(text):
     except Exception as e:
         print("Telegram error:", e)
 
-# =========================
-# POSITION SIZE
-# =========================
 def calculate_position_size(balance, risk_percent, entry, stop):
     risk_amount = balance * (risk_percent / 100)
     risk_per_unit = abs(entry - stop)
+    return round(risk_amount / risk_per_unit, 3) if risk_per_unit else 0
 
-    if risk_per_unit == 0:
-        return 0
-
-    return round(risk_amount / risk_per_unit, 3)
-
-# =========================
-# BTC PARSER
-# =========================
 def parse_btc_trend(value):
     try:
         v = float(value)
-        if v == 1:
-            return "UP"
-        elif v == -1:
-            return "DOWN"
+        return "UP" if v == 1 else "DOWN"
     except:
-        pass
-    return "UNKNOWN"
+        return "UNKNOWN"
+
+# =========================
+# FUNDING API
+# =========================
+def get_funding(symbol):
+    try:
+        url = f"https://fapi.binance.com/fapi/v1/premiumIndex?symbol={symbol}"
+        r = requests.get(url, timeout=5).json()
+        return float(r.get("lastFundingRate", 0))
+    except:
+        return 0
 
 # =========================
 # WEBHOOK
@@ -87,7 +83,7 @@ def parse_btc_trend(value):
 def webhook():
 
     if WEBHOOK_SECRET:
-        secret = request.headers.get('X-Webhook-Secret') or request.args.get('secret')
+        secret = request.headers.get('X-Webhook-Secret')
         if secret != WEBHOOK_SECRET:
             abort(403)
 
@@ -102,7 +98,6 @@ def webhook():
         atr_percent = safe_float(data.get("atr_percent"))
         ema_distance = safe_float(data.get("ema_distance"))
         range_position = safe_float(data.get("range_position"))
-        fg_value = data.get("fear_greed")
 
         btc_trend = parse_btc_trend(data.get("btc_trend"))
         btc_strength = safe_float(data.get("btc_strength"))
@@ -146,7 +141,7 @@ def webhook():
             score -= 10
 
         # =========================
-        # CONTEXT v1.5
+        # CONTEXT (BTC + ETH)
         # =========================
         context = 0
 
@@ -156,10 +151,20 @@ def webhook():
         if btc_strength > 0.003:
             context += 5
 
+        # =========================
+        # FUNDING
+        # =========================
+        funding = get_funding(symbol)
+
+        if funding > 0.01:
+            context += 10 if signal == "SHORT" else -10
+        elif funding < -0.01:
+            context += 10 if signal == "LONG" else -10
+
         score += context
 
         # =========================
-        # MARKET REGIME v1.6
+        # MARKET REGIME
         # =========================
         if btc_strength < 0.002:
             regime = "NEUTRAL"
@@ -203,28 +208,48 @@ def webhook():
         size = calculate_position_size(DEPOSIT, RISK_PERCENT, price, stop)
 
         # =========================
-        # MESSAGE
+        # VISUAL (ВОССТАНОВЛЕН)
         # =========================
+        icon = "🟢" if signal == "LONG" else "🔴"
+
+        if score >= 80:
+            rating = "A+ 🔥"
+            confidence = "HIGH"
+        elif score >= 70:
+            rating = "B"
+            confidence = "MEDIUM"
+        else:
+            rating = "C"
+            confidence = "LOW"
+
+        phase = "STRONG TREND 🚀" if ema_distance > 0.005 else "TREND"
+
         text = f"""
 📊 СИГНАЛ — {symbol}
 
-{signal}
-📊 Score: {score}
-🧠 Decision: {decision}
-🌍 Regime: {regime}
+{icon} {signal}
+📊 Рейтинг: {score}/100 ({rating})
+🧠 Решение: {decision}
+🛰 Фаза: {phase}
+📡 Confidence: {confidence}
 
+🌍 Режим рынка: {regime}
 📊 BTC: {btc_trend} | ETH: {eth_trend}
+💸 Funding: {round(funding,5)}
 
-🎯 Entry: {price}
-🛑 Stop: {round(stop, 6)}
+📈 ATR: {round(atr, 2)}
+
+🎯 Вход: {price}
+🛑 Стоп: {round(stop, 6)}
 
 ⚖ RR: {round(rr1,2)} / {round(rr2,2)}
 
-🎯 TP1: {round(tp1,6)}
-🎯 TP2: {round(tp2,6)}
+🎯 Тейки:
+TP1: {round(tp1,6)}
+TP2: {round(tp2,6)}
 
-💰 Risk: ${round(DEPOSIT * RISK_PERCENT / 100, 2)}
-📦 Size: {size}
+💰 Риск: ${round(DEPOSIT * RISK_PERCENT / 100, 2)}
+📦 Объём: {size}
         """.strip()
 
         send_telegram(text)
@@ -238,7 +263,7 @@ def webhook():
 
 @app.route('/')
 def home():
-    return "Bot v1.6.1 running 🚀"
+    return "Bot v1.6.3 running 🚀"
 
 
 if __name__ == "__main__":
