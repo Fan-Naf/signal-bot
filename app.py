@@ -81,19 +81,6 @@ def log_trade(data):
         f.write(json.dumps(data, ensure_ascii=False) + "\n")
 
 # =========================
-# POSITION SIZE
-# =========================
-def calculate_position_size(balance, risk_percent, entry, stop):
-    risk_amount = balance * (risk_percent / 100)
-    risk_per_unit = abs(entry - stop)
-
-    if risk_per_unit == 0:
-        return 0
-
-    size = risk_amount / risk_per_unit
-    return round(size, 3)
-
-# =========================
 # BTC PARSER
 # =========================
 def parse_btc_trend(value):
@@ -136,8 +123,20 @@ def webhook():
         eth_raw = data.get("eth_trend")
         eth_trend = "UP" if eth_raw == 1 else "DOWN"
 
-        if is_cooldown(symbol):
-            return "cooldown active"
+        now = time.time()
+
+        # =========================
+        # PROTECTION: CLUSTER
+        # =========================
+        cluster = STATE.get("cluster", [])
+        cluster = [t for t in cluster if now - t < 300]
+
+        if len(cluster) >= 3:
+            return "skip - cluster"
+
+        cluster.append(now)
+        STATE["cluster"] = cluster
+        save_state(STATE)
 
         # =========================
         # VALIDATION
@@ -149,7 +148,7 @@ def webhook():
             return "skip - no btc"
 
         # =========================
-        # BASE SCORING (v1.4)
+        # BASE SCORING
         # =========================
         score = 0
 
@@ -178,118 +177,54 @@ def webhook():
             score -= 10
 
         # =========================
-        # CONTEXT ENGINE v1.5
+        # CONTEXT v1.5
         # =========================
         context_score = 0
 
-        # BTC
-        if signal == "LONG":
-            context_score += 10 if btc_trend == "UP" else -10
-        else:
-            context_score += 10 if btc_trend == "DOWN" else -10
+        context_score += 10 if (signal == "LONG" and btc_trend == "UP") or (signal == "SHORT" and btc_trend == "DOWN") else -10
+        context_score += 10 if (signal == "LONG" and eth_trend == "UP") or (signal == "SHORT" and eth_trend == "DOWN") else -10
 
-        # ETH
-        if signal == "LONG":
-            context_score += 10 if eth_trend == "UP" else -10
-        else:
-            context_score += 10 if eth_trend == "DOWN" else -10
-
-        # BTC strength
         if btc_strength > 0.003:
             context_score += 5
 
-        # FUNDING (заготовка)
-        funding = 0
-
         score += context_score
+
+        # =========================
+        # MARKET REGIME v1.6
+        # =========================
+        regime = "NEUTRAL"
+
+        if btc_trend == "UP" and btc_strength > 0.002:
+            regime = "BULL"
+        elif btc_trend == "DOWN" and btc_strength > 0.002:
+            regime = "BEAR"
+
+        if regime == "BULL":
+            score += 10 if signal == "LONG" else -10
+        elif regime == "BEAR":
+            score += 10 if signal == "SHORT" else -10
+        else:
+            score -= 10
+
+        # =========================
+        # FINAL LIMIT
+        # =========================
         score = max(0, min(score, 100))
 
-        # =========================
-        # FILTER (ослабленный)
-        # =========================
         if score < 65:
             return "skip - weak"
-
-        decision = "TRADE" if score >= 75 else "CAREFUL"
-
-        # =========================
-        # RATING
-        # =========================
-        if score >= 80:
-            rating = "A+ 🔥"
-            confidence = "HIGH"
-        else:
-            rating = "B"
-            confidence = "MEDIUM"
-
-        phase = "STRONG TREND 🚀" if ema_distance > 0.005 else "TREND"
-
-        # =========================
-        # TP / SL
-        # =========================
-        stop_distance = atr * (2.2 if score >= 80 else 1.5)
-
-        if signal == "LONG":
-            stop = price - stop_distance
-            tp1 = price + stop_distance * 1.5
-            tp2 = price + stop_distance * 2.5
-        else:
-            stop = price + stop_distance
-            tp1 = price - stop_distance * 1.5
-            tp2 = price - stop_distance * 2.5
-
-        risk_distance = abs(price - stop)
-        tp1_rr = abs(tp1 - price) / risk_distance if risk_distance else 0
-        tp2_rr = abs(tp2 - price) / risk_distance if risk_distance else 0
-
-        size = calculate_position_size(DEPOSIT, RISK_PERCENT, price, stop)
-
-        icon = "🟢" if signal == "LONG" else "🔴"
-
-        # =========================
-        # FEAR GREED
-        # =========================
-        if fg_value is None:
-            fg_text = "—"
-        else:
-            fg_value = int(fg_value)
-            if fg_value < 30:
-                fg_label = "Fear"
-            elif fg_value > 70:
-                fg_label = "Greed"
-            else:
-                fg_label = "Neutral"
-            fg_text = f"{fg_value} ({fg_label})"
 
         # =========================
         # MESSAGE
         # =========================
         text = f"""
-📊 СИГНАЛ — {symbol}
+📊 {symbol}
 
-{icon} {signal}
-📊 Рейтинг: {score}/100 ({rating})
-🧠 Решение: {decision}
-🛰 Фаза: {phase}
-📡 Confidence: {confidence}
-
-📊 BTC: {btc_trend}
-
-🧠 Рынок: {fg_text}
-
-📈 ATR: {round(atr, 2)}
-
-🎯 Вход: {price}
-🛑 Стоп: {round(stop, 6)}
-
-⚖ RR: {round(tp1_rr, 2)} / {round(tp2_rr, 2)}
-
-🎯 Тейки:
-TP1: {round(tp1, 6)}
-TP2: {round(tp2, 6)}
-
-💰 Риск: ${round(DEPOSIT * RISK_PERCENT / 100, 2)}
-📦 Объём: {size}
+{signal}
+Score: {score}
+Regime: {regime}
+BTC: {btc_trend}
+ETH: {eth_trend}
         """.strip()
 
         send_telegram(text)
@@ -299,8 +234,7 @@ TP2: {round(tp2, 6)}
             "symbol": symbol,
             "signal": signal,
             "score": score,
-            "btc": btc_trend,
-            "decision": decision
+            "regime": regime
         })
 
         return "ok"
@@ -312,7 +246,7 @@ TP2: {round(tp2, 6)}
 
 @app.route('/')
 def home():
-    return "Bot v1.5 running 🚀"
+    return "Bot v1.6 running 🚀"
 
 
 if __name__ == "__main__":
