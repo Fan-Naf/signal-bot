@@ -146,25 +146,26 @@ def webhook():
         context = 0
 
         context += 10 if (signal == "LONG" and btc_trend == "UP") or (signal == "SHORT" and btc_trend == "DOWN") else -10
-        context += 10 if (signal == "LONG" and eth_trend == "UP") or (signal == "SHORT" and eth_trend == "DOWN") else -10
+
+        context += 7 if (signal == "LONG" and eth_trend == "UP") or (signal == "SHORT" and eth_trend == "DOWN") else -7
 
         if btc_strength > 0.003:
             context += 5
 
         # =========================
-        # FUNDING
+        # FUNDING (ОСЛАБЛЕН)
         # =========================
         funding = get_funding(symbol)
 
         if funding > 0.01:
-            context += 10 if signal == "SHORT" else -10
+            context += 5 if signal == "SHORT" else -5
         elif funding < -0.01:
-            context += 10 if signal == "LONG" else -10
+            context += 5 if signal == "LONG" else -5
 
         score += context
 
         # =========================
-        # MARKET REGIME
+        # MARKET REGIME (ОСЛАБЛЕН)
         # =========================
         if btc_strength < 0.002:
             regime = "NEUTRAL"
@@ -178,11 +179,14 @@ def webhook():
         elif regime == "BEAR":
             score += 10 if signal == "SHORT" else -10
         else:
-            score -= 10
+            score -= 5
 
         score = max(0, min(score, 100))
 
-        if score < 65:
+        # =========================
+        # ОСЛАБЛЕННЫЙ ФИЛЬТР
+        # =========================
+        if score < 60:
             return "skip - weak"
 
         decision = "TRADE" if score >= 75 else "CAREFUL"
@@ -208,7 +212,7 @@ def webhook():
         size = calculate_position_size(DEPOSIT, RISK_PERCENT, price, stop)
 
         # =========================
-        # VISUAL (ВОССТАНОВЛЕН)
+        # VISUAL
         # =========================
         icon = "🟢" if signal == "LONG" else "🔴"
 
@@ -263,7 +267,7 @@ TP2: {round(tp2,6)}
 
 @app.route('/')
 def home():
-    return "Bot v1.6.3 running 🚀"
+    return "Bot v1.6.4 running 🚀"
 
 
 if __name__ == "__main__":
