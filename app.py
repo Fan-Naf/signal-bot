@@ -84,7 +84,6 @@ def get_funding(symbol):
         return 0
 
 
-# 🔥 ВЫНЕСЕНА ОСНОВНАЯ ЛОГИКА
 def process_signal(data):
 
     try:
@@ -120,6 +119,7 @@ def process_signal(data):
         if atr == 0 or btc_trend == "UNKNOWN":
             return
 
+        # SCORE
         score = 0
 
         score += 30 if ema_distance > 0.005 else 20 if ema_distance > 0.002 else 5
@@ -150,6 +150,7 @@ def process_signal(data):
 
         score += context
 
+        # REGIME
         if btc_strength < 0.002:
             regime = "NEUTRAL"
         elif btc_trend == "UP":
@@ -167,6 +168,9 @@ def process_signal(data):
         if score < 60:
             return
 
+        decision = "TRADE" if score >= 75 else "CAREFUL"
+
+        # TP / SL
         stop_distance = atr * (2.2 if score >= 80 else 1.5)
 
         if signal == "LONG":
@@ -184,13 +188,40 @@ def process_signal(data):
             return
 
         rr1 = abs(tp1 - price) / risk_distance if risk_distance else 0
+        rr2 = abs(tp2 - price) / risk_distance if risk_distance else 0
 
         if rr1 < 1.3:
             return
 
         size = calculate_position_size(DEPOSIT, RISK_PERCENT, price, stop)
 
-        text = f"{symbol} {signal} | Score: {score} | Size: {size}"
+        icon = "🟢" if signal == "LONG" else "🔴"
+
+        text = f"""
+📊 СИГНАЛ — {symbol}
+
+{icon} {signal}
+📊 Рейтинг: {score}/100
+🧠 Решение: {decision}
+
+🌍 Режим: {regime}
+📊 BTC: {btc_trend} | ETH: {eth_trend}
+💸 Funding: {round(funding,5)}
+
+📈 ATR: {round(atr, 4)}
+
+🎯 Вход: {price}
+🛑 Стоп: {round(stop, 6)}
+
+⚖ RR: {round(rr1,2)} / {round(rr2,2)}
+
+🎯 Тейки:
+TP1: {round(tp1,6)}
+TP2: {round(tp2,6)}
+
+💰 Риск: ${round(DEPOSIT * RISK_PERCENT / 100, 2)}
+📦 Объём: {size}
+        """.strip()
 
         send_telegram(text)
 
@@ -207,7 +238,6 @@ def webhook():
 
     data = request.json
 
-    # 🔥 мгновенный ответ
     threading.Thread(target=process_signal, args=(data,)).start()
 
     return "ok"
@@ -215,7 +245,7 @@ def webhook():
 
 @app.route('/')
 def home():
-    return "Bot v1.9 running 🚀"
+    return "Bot v1.10 running 🚀"
 
 
 if __name__ == "__main__":
