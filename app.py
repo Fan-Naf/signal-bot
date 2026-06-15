@@ -7,9 +7,6 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-# =========================
-# ENV
-# =========================
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
@@ -19,9 +16,6 @@ RISK_PERCENT = float(os.getenv("RISK_PERCENT", 1))
 
 STATE_FILE = "state.json"
 
-# =========================
-# STATE
-# =========================
 def load_state():
     if not os.path.exists(STATE_FILE):
         return {}
@@ -34,9 +28,6 @@ def save_state(state):
 
 STATE = load_state()
 
-# =========================
-# UTILS
-# =========================
 def safe_float(x, default=0.0):
     try:
         return float(x)
@@ -65,9 +56,6 @@ def parse_btc_trend(value):
     except:
         return "UNKNOWN"
 
-# =========================
-# FUNDING API
-# =========================
 def get_funding(symbol):
     try:
         url = f"https://fapi.binance.com/fapi/v1/premiumIndex?symbol={symbol}"
@@ -76,9 +64,6 @@ def get_funding(symbol):
     except:
         return 0
 
-# =========================
-# WEBHOOK
-# =========================
 @app.route('/webhook', methods=['POST'])
 def webhook():
 
@@ -106,7 +91,7 @@ def webhook():
         now = time.time()
 
         # =========================
-        # CLUSTER FILTER
+        # CLUSTER FILTER (НЕ ТРОГАЕМ)
         # =========================
         cluster = STATE.get("cluster", [])
         cluster = [t for t in cluster if now - t < 300]
@@ -119,7 +104,7 @@ def webhook():
         save_state(STATE)
 
         # =========================
-        # VALIDATION
+        # VALIDATION (НЕ ТРОГАЕМ)
         # =========================
         if atr == 0:
             return "skip - bad atr"
@@ -128,7 +113,7 @@ def webhook():
             return "skip - no btc"
 
         # =========================
-        # BASE SCORE
+        # BASE SCORE (НЕ ТРОГАЕМ)
         # =========================
         score = 0
 
@@ -141,31 +126,33 @@ def webhook():
             score -= 10
 
         # =========================
-        # CONTEXT (BTC + ETH)
+        # CONTEXT (ОСЛАБЛЕН)
         # =========================
         context = 0
 
         context += 10 if (signal == "LONG" and btc_trend == "UP") or (signal == "SHORT" and btc_trend == "DOWN") else -10
 
-        context += 7 if (signal == "LONG" and eth_trend == "UP") or (signal == "SHORT" and eth_trend == "DOWN") else -7
+        # ETH (было ±7 → стало ±5)
+        context += 5 if (signal == "LONG" and eth_trend == "UP") or (signal == "SHORT" and eth_trend == "DOWN") else -5
 
         if btc_strength > 0.003:
             context += 5
 
         # =========================
-        # FUNDING (ОСЛАБЛЕН)
+        # FUNDING (ТОЛЬКО БОНУС)
         # =========================
         funding = get_funding(symbol)
 
-        if funding > 0.01:
-            context += 5 if signal == "SHORT" else -5
-        elif funding < -0.01:
-            context += 5 if signal == "LONG" else -5
+        if funding > 0.01 and signal == "SHORT":
+            context += 5
+
+        elif funding < -0.01 and signal == "LONG":
+            context += 5
 
         score += context
 
         # =========================
-        # MARKET REGIME (ОСЛАБЛЕН)
+        # MARKET REGIME (НЕ ШТРАФУЕТ)
         # =========================
         if btc_strength < 0.002:
             regime = "NEUTRAL"
@@ -175,24 +162,23 @@ def webhook():
             regime = "BEAR"
 
         if regime == "BULL":
-            score += 10 if signal == "LONG" else -10
+            score += 10 if signal == "LONG" else 0
         elif regime == "BEAR":
-            score += 10 if signal == "SHORT" else -10
-        else:
-            score -= 5
+            score += 10 if signal == "SHORT" else 0
+        # NEUTRAL → 0
 
         score = max(0, min(score, 100))
 
         # =========================
-        # ОСЛАБЛЕННЫЙ ФИЛЬТР
+        # ОСЛАБЛЕННЫЙ ПОРОГ
         # =========================
-        if score < 60:
+        if score < 55:
             return "skip - weak"
 
         decision = "TRADE" if score >= 75 else "CAREFUL"
 
         # =========================
-        # TP / SL
+        # TP / SL (НЕ ТРОГАЕМ)
         # =========================
         stop_distance = atr * (2.2 if score >= 80 else 1.5)
 
@@ -212,7 +198,7 @@ def webhook():
         size = calculate_position_size(DEPOSIT, RISK_PERCENT, price, stop)
 
         # =========================
-        # VISUAL
+        # VISUAL (НЕ ТРОГАЕМ)
         # =========================
         icon = "🟢" if signal == "LONG" else "🔴"
 
@@ -267,7 +253,7 @@ TP2: {round(tp2,6)}
 
 @app.route('/')
 def home():
-    return "Bot v1.6.4 running 🚀"
+    return "Bot v1.7 running 🚀"
 
 
 if __name__ == "__main__":
