@@ -2,6 +2,7 @@ import os
 import json
 import time
 import requests
+import threading
 from flask import Flask, request, abort
 
 app = Flask(__name__)
@@ -45,7 +46,7 @@ def send_telegram(text):
         requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
             json={"chat_id": CHAT_ID, "text": text},
-            timeout=10
+            timeout=5
         )
     except Exception as e:
         print("Telegram error:", e)
@@ -75,27 +76,22 @@ def get_funding(symbol):
 
     try:
         url = f"https://fapi.binance.com/fapi/v1/premiumIndex?symbol={symbol}"
-        r = requests.get(url, timeout=5).json()
+        r = requests.get(url, timeout=2).json()
         val = float(r.get("lastFundingRate", 0))
         FUNDING_CACHE[symbol] = (now, val)
         return val
     except:
         return 0
 
-@app.route('/webhook', methods=['POST'])
-def webhook():
 
-    if WEBHOOK_SECRET:
-        if request.headers.get('X-Webhook-Secret') != WEBHOOK_SECRET:
-            abort(403)
-
-    data = request.json
+# 🔥 ВЫНЕСЕНА ОСНОВНАЯ ЛОГИКА
+def process_signal(data):
 
     try:
         symbol = data.get("symbol", "").upper().replace("BINANCE:", "")
 
         if symbol not in WHITELIST:
-            return "skip - whitelist"
+            return
 
         price = safe_float(data.get("price"))
         signal = data.get("signal", "").upper()
@@ -111,21 +107,19 @@ def webhook():
 
         now = time.time()
 
-        # CLUSTER
         cluster = STATE.get("cluster", [])
         cluster = [t for t in cluster if now - t < 300]
 
         if len(cluster) >= 3:
-            return "skip - cluster"
+            return
 
         cluster.append(now)
         STATE["cluster"] = cluster
         save_state(STATE)
 
         if atr == 0 or btc_trend == "UNKNOWN":
-            return "skip - bad data"
+            return
 
-        # SCORE
         score = 0
 
         score += 30 if ema_distance > 0.005 else 20 if ema_distance > 0.002 else 5
@@ -136,7 +130,6 @@ def webhook():
         if atr_percent > 0.02:
             score -= 10
 
-        # CONTEXT
         context = 0
 
         context += 10 if (signal == "LONG" and btc_trend == "UP") or (signal == "SHORT" and btc_trend == "DOWN") else -10
@@ -145,7 +138,6 @@ def webhook():
         if btc_strength > 0.003:
             context += 5
 
-        # 🔥 новый фильтр слабого рынка
         if btc_strength < 0.0015:
             context -= 10
 
@@ -158,7 +150,6 @@ def webhook():
 
         score += context
 
-        # REGIME
         if btc_strength < 0.002:
             regime = "NEUTRAL"
         elif btc_trend == "UP":
@@ -174,9 +165,8 @@ def webhook():
         score = max(0, min(score, 100))
 
         if score < 60:
-            return "skip - weak"
+            return
 
-        # TP/SL
         stop_distance = atr * (2.2 if score >= 80 else 1.5)
 
         if signal == "LONG":
@@ -190,49 +180,43 @@ def webhook():
 
         risk_distance = abs(price - stop)
 
-        # 🔥 фильтр узкого стопа
         if risk_distance / price < 0.002:
-            return "skip - tight stop"
+            return
 
         rr1 = abs(tp1 - price) / risk_distance if risk_distance else 0
-        rr2 = abs(tp2 - price) / risk_distance if risk_distance else 0
 
-        # 🔥 фильтр RR
         if rr1 < 1.3:
-            return "skip - low rr"
+            return
 
         size = calculate_position_size(DEPOSIT, RISK_PERCENT, price, stop)
 
-        icon = "🟢" if signal == "LONG" else "🔴"
-
-        text = f"""
-📊 {symbol}
-
-{icon} {signal}
-Score: {score}
-
-Entry: {price}
-Stop: {round(stop,6)}
-
-RR: {round(rr1,2)} / {round(rr2,2)}
-
-TP1: {round(tp1,6)}
-TP2: {round(tp2,6)}
-
-Size: {size}
-        """.strip()
+        text = f"{symbol} {signal} | Score: {score} | Size: {size}"
 
         send_telegram(text)
 
-        return "ok"
-
     except Exception as e:
-        print("ERROR:", e)
-        return "error", 500
+        print("PROCESS ERROR:", e)
+
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+
+    if WEBHOOK_SECRET:
+        if request.headers.get('X-Webhook-Secret') != WEBHOOK_SECRET:
+            abort(403)
+
+    data = request.json
+
+    # 🔥 мгновенный ответ
+    threading.Thread(target=process_signal, args=(data,)).start()
+
+    return "ok"
+
 
 @app.route('/')
 def home():
-    return "Bot v1.8 running 🚀"
+    return "Bot v1.9 running 🚀"
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
